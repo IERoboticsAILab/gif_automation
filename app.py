@@ -127,8 +127,10 @@ with st.sidebar:
     preserving as much quality as possible.
     
     It also supports converting MP4 videos to GIF format.
+
+    Try messing with the frame rate first in order to get the best results.
     
-    For best results with video conversion, install FFmpeg.
+
     """)
 
 # File upload - accept both GIF and MP4
