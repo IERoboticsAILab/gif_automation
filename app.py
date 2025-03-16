@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import time
+import shutil
 from main import compress_gif, convert_mp4_to_gif  # Import both functions
 
 # Set page config
@@ -112,6 +113,12 @@ with st.sidebar:
             step=0.1,
             help="Scale factor for the video resolution (lower = smaller file)"
         )
+        
+        skip_compression = st.checkbox(
+            "Skip Compression", 
+            value=False,
+            help="Just convert MP4 to GIF without any additional compression"
+        )
     
     st.markdown("---")
     st.markdown("### About")
@@ -153,74 +160,85 @@ if uploaded_file is not None:
         st.write(f"Original Size: {file_size:.2f} MB")
     
     # Process button - show appropriate label based on file type
-    button_label = "Convert to GIF & Compress" if is_video else "Compress GIF"
+    if is_video:
+        button_label = "Convert to GIF" if skip_compression else "Convert to GIF & Compress"
+    else:
+        button_label = "Compress GIF"
     
     if st.button(button_label):
         with st.spinner("Processing... This may take a moment."):
-            # Create temporary files for processing
-            with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_output:
-                output_path = temp_output.name
-            
-            # Handle video conversion if needed
-            if is_video:
-                # First convert the MP4 to GIF
-                with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_gif:
-                    gif_path = temp_gif.name
-                
-                # Status message
-                progress_placeholder = st.empty()
-                progress_placeholder.write("Converting MP4 to GIF...")
-                
-                # Convert the MP4 to GIF
-                success = convert_mp4_to_gif(
-                    mp4_path, 
-                    gif_path, 
-                    fps=video_fps, 
-                    scale=video_scale
-                )
-                
-                if not success:
-                    st.error("Failed to convert MP4 to GIF. Please check that FFmpeg is installed or try a different file.")
-                    # Clean up files
-                    os.unlink(mp4_path)
-                    os.unlink(gif_path)
-                    st.stop()
-                
-                # Now we have a GIF to compress
-                input_path = gif_path
-                
-                # Update progress message
-                progress_placeholder.write("MP4 converted to GIF. Now compressing...")
-                
-            else:
-                # For GIF files, just write to a temp file
-                with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_input:
-                    temp_input.write(uploaded_file.getvalue())
-                    input_path = temp_input.name
-                
-                # Progress placeholder for compression updates
-                progress_placeholder = st.empty()
-            
-            # Run compression
             try:
-                # Define the progress callback function
-                def progress_callback(attempt, current_size, settings):
-                    progress_placeholder.write(f"Attempt {attempt}: {current_size:.2f}MB (Settings: {settings})")
+                # Create temporary files for processing
+                with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_output:
+                    output_path = temp_output.name
                 
-                # Process the GIF
-                orig_size, new_size = compress_gif(
-                    input_path,
-                    output_path,
-                    target_size_mb=target_size,
-                    max_attempts=max_attempts,
-                    progress_callback=progress_callback,
-                    min_scale=min_scale,
-                    min_colors=min_colors,
-                    frame_sample_rate=frame_sample_rate,
-                    duration_factor=duration_factor,
-                    force_scaling=force_scaling,
-                    crop_pixels=crop_pixels
-                )
+                # Handle video conversion if needed
+                if is_video:
+                    # First convert the MP4 to GIF
+                    with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_gif:
+                        gif_path = temp_gif.name
+                    
+                    # Status message
+                    progress_placeholder = st.empty()
+                    progress_placeholder.write("Converting MP4 to GIF...")
+                    
+                    # Convert the MP4 to GIF
+                    success = convert_mp4_to_gif(
+                        mp4_path, 
+                        gif_path, 
+                        fps=video_fps, 
+                        scale=video_scale
+                    )
+                    
+                    if not success:
+                        st.error("Failed to convert MP4 to GIF. Please check that FFmpeg is installed or try a different file.")
+                        # Clean up files
+                        os.unlink(mp4_path)
+                        os.unlink(gif_path)
+                        st.stop()
+                    
+                    # Now we have a GIF to compress
+                    input_path = gif_path
+                    
+                    # If user chose to skip compression, we'll just use the converted GIF
+                    if skip_compression:
+                        # Just copy the converted GIF to the output path
+                        shutil.copy(input_path, output_path)
+                        orig_size = os.path.getsize(input_path)
+                        new_size = orig_size
+                        progress_placeholder.write("MP4 converted to GIF successfully!")
+                    else:
+                        # Update progress message for compression
+                        progress_placeholder.write("MP4 converted to GIF. Now compressing...")
+                else:
+                    # For GIF files, just write to a temp file
+                    with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_input:
+                        temp_input.write(uploaded_file.getvalue())
+                        input_path = temp_input.name
+                    
+                    # Progress placeholder for compression updates
+                    progress_placeholder = st.empty()
+                
+                # Run compression if not skipped
+                if not (is_video and skip_compression):
+                    # Define the progress callback function
+                    def progress_callback(attempt, current_size, settings):
+                        progress_placeholder.write(f"Attempt {attempt}: {current_size:.2f}MB (Settings: {settings})")
+                    
+                    # Process the GIF
+                    orig_size, new_size = compress_gif(
+                        input_path,
+                        output_path,
+                        target_size_mb=target_size,
+                        max_attempts=max_attempts,
+                        progress_callback=progress_callback,
+                        min_scale=min_scale,
+                        min_colors=min_colors,
+                        frame_sample_rate=frame_sample_rate,
+                        duration_factor=duration_factor,
+                        force_scaling=force_scaling,
+                        crop_pixels=crop_pixels
+                    )
                 
                 # Read the compressed file
                 with open(output_path, "rb") as f:
@@ -228,44 +246,51 @@ if uploaded_file is not None:
                 
                 # Display the compressed GIF
                 with col2:
-                    st.subheader("Compressed GIF")
+                    result_label = "Converted GIF" if (is_video and skip_compression) else "Compressed GIF"
+                    st.subheader(result_label)
                     st.image(compressed_data, use_container_width=True)
                     
                     # Display stats
                     new_size_mb = new_size / (1024 * 1024)
                     compression_ratio = (1 - (new_size / orig_size)) * 100
-                    st.write(f"Compressed Size: {new_size_mb:.2f} MB")
-                    st.write(f"Compression: {compression_ratio:.2f}%")
+                    st.write(f"Final Size: {new_size_mb:.2f} MB")
+                    
+                    # Only show compression ratio if compression was applied
+                    if not (is_video and skip_compression):
+                        st.write(f"Compression: {compression_ratio:.2f}%")
                     
                     # Display compression settings used
                     st.write("**Applied Settings:**")
                     settings = []
                     if is_video:
                         settings.append(f"Converted from MP4 (FPS: {video_fps}, Scale: {video_scale})")
-                    if crop_pixels:
-                        settings.append(f"Cropped: {crop_pixels}")
-                    if frame_sample_rate < 1.0:
-                        settings.append(f"Frame sampling: {frame_sample_rate:.1f}")
-                    if duration_factor != 1.0:
-                        settings.append(f"Duration adjustment: {duration_factor:.1f}x")
-                    if min_colors < 256:
-                        settings.append(f"Color reduction: min {min_colors} colors")
-                    if min_scale < 1.0:
-                        settings.append(f"Scale reduction: min {min_scale:.2f}x")
-                    if force_scaling:
-                        settings.append("Scaling applied early")
+                    
+                    # Only display compression-related settings if compression was applied
+                    if not (is_video and skip_compression):
+                        if crop_pixels:
+                            settings.append(f"Cropped: {crop_pixels}")
+                        if frame_sample_rate < 1.0:
+                            settings.append(f"Frame sampling: {frame_sample_rate:.1f}")
+                        if duration_factor != 1.0:
+                            settings.append(f"Duration adjustment: {duration_factor:.1f}x")
+                        if min_colors < 256:
+                            settings.append(f"Color reduction: min {min_colors} colors")
+                        if min_scale < 1.0:
+                            settings.append(f"Scale reduction: min {min_scale:.2f}x")
+                        if force_scaling:
+                            settings.append("Scaling applied early")
                         
                     if settings:
                         st.write(", ".join(settings))
                 
-                # Allow downloading the compressed file
+                # Allow downloading the final file
+                download_label = "Download Converted GIF" if (is_video and skip_compression) else "Download Compressed GIF"
                 st.download_button(
-                    label="Download Compressed GIF",
+                    label=download_label,
                     data=compressed_data,
-                    file_name=f"compressed_{os.path.splitext(uploaded_file.name)[0]}.gif",
+                    file_name=f"{'converted' if (is_video and skip_compression) else 'compressed'}_{os.path.splitext(uploaded_file.name)[0]}.gif",
                     mime="image/gif"
                 )
-                
             except Exception as e:
                 st.error(f"Error processing file: {e}")
             
@@ -274,8 +299,11 @@ if uploaded_file is not None:
                 try:
                     if is_video:
                         os.unlink(mp4_path)
-                        os.unlink(gif_path)
-                    os.unlink(input_path)
-                    os.unlink(output_path)
-                except:
+                        if 'gif_path' in locals():
+                            os.unlink(gif_path)
+                    if 'input_path' in locals():
+                        os.unlink(input_path)
+                    if 'output_path' in locals():
+                        os.unlink(output_path)
+                except Exception as e:
                     pass 
