@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import time
-from main import compress_gif  # Import the function from main.py
+from main import compress_gif, convert_mp4_to_gif  # Import both functions
 
 # Set page config
 st.set_page_config(
@@ -13,7 +13,7 @@ st.set_page_config(
 
 # App title and description
 st.title("GIF Compression Tool")
-st.markdown("Upload a GIF and compress it to your desired size!")
+st.markdown("Upload a GIF or MP4 file and compress it to your desired size!")
 
 # Sidebar with options
 with st.sidebar:
@@ -94,44 +94,112 @@ with st.sidebar:
         use_crop = crop_left > 0 or crop_top > 0 or crop_right > 0 or crop_bottom > 0
         crop_pixels = (crop_left, crop_top, crop_right, crop_bottom) if use_crop else None
     
+    with st.expander("MP4 to GIF Conversion"):
+        video_fps = st.slider(
+            "GIF Frame Rate", 
+            min_value=5, 
+            max_value=30, 
+            value=10, 
+            step=1,
+            help="Frames per second for the converted GIF"
+        )
+        
+        video_scale = st.slider(
+            "Scale Factor", 
+            min_value=0.2, 
+            max_value=1.0, 
+            value=0.8, 
+            step=0.1,
+            help="Scale factor for the video resolution (lower = smaller file)"
+        )
+    
     st.markdown("---")
     st.markdown("### About")
     st.markdown("""
     This tool compresses GIF files to a target size while 
     preserving as much quality as possible.
     
-    It uses an adaptive compression algorithm that tries different 
-    settings until the target size is reached.
+    It also supports converting MP4 videos to GIF format.
+    
+    For best results with video conversion, install FFmpeg.
     """)
 
-# File upload
-uploaded_file = st.file_uploader("Upload a GIF file", type=["gif"])
+# File upload - accept both GIF and MP4
+uploaded_file = st.file_uploader("Upload a GIF or MP4 file", type=["gif", "mp4"])
 
 if uploaded_file is not None:
-    # Display the original GIF
+    # Determine file type
+    is_video = uploaded_file.name.lower().endswith('.mp4')
+    
+    # Create a container for the original file (either GIF or video)
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Original GIF")
-        st.image(uploaded_file, use_container_width=True)
+        if is_video:
+            st.subheader("Original MP4")
+            # For MP4 files, use the native video player
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_mp4:
+                temp_mp4.write(uploaded_file.getvalue())
+                mp4_path = temp_mp4.name
+            
+            # Display the video
+            st.video(mp4_path)
+        else:
+            st.subheader("Original GIF")
+            st.image(uploaded_file, use_container_width=True)
         
         # Get and display original file size
         file_size = uploaded_file.size / (1024 * 1024)  # Convert to MB
         st.write(f"Original Size: {file_size:.2f} MB")
     
-    # Process button
-    if st.button("Compress GIF"):
-        with st.spinner("Compressing... This may take a moment."):
+    # Process button - show appropriate label based on file type
+    button_label = "Convert to GIF & Compress" if is_video else "Compress GIF"
+    
+    if st.button(button_label):
+        with st.spinner("Processing... This may take a moment."):
             # Create temporary files for processing
-            with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_input:
-                temp_input.write(uploaded_file.getvalue())
-                input_path = temp_input.name
-            
             with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_output:
                 output_path = temp_output.name
             
-            # Progress placeholder
-            progress_placeholder = st.empty()
+            # Handle video conversion if needed
+            if is_video:
+                # First convert the MP4 to GIF
+                with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_gif:
+                    gif_path = temp_gif.name
+                
+                # Status message
+                progress_placeholder = st.empty()
+                progress_placeholder.write("Converting MP4 to GIF...")
+                
+                # Convert the MP4 to GIF
+                success = convert_mp4_to_gif(
+                    mp4_path, 
+                    gif_path, 
+                    fps=video_fps, 
+                    scale=video_scale
+                )
+                
+                if not success:
+                    st.error("Failed to convert MP4 to GIF. Please check that FFmpeg is installed or try a different file.")
+                    # Clean up files
+                    os.unlink(mp4_path)
+                    os.unlink(gif_path)
+                    st.stop()
+                
+                # Now we have a GIF to compress
+                input_path = gif_path
+                
+                # Update progress message
+                progress_placeholder.write("MP4 converted to GIF. Now compressing...")
+                
+            else:
+                # For GIF files, just write to a temp file
+                with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as temp_input:
+                    temp_input.write(uploaded_file.getvalue())
+                    input_path = temp_input.name
+                
+                # Progress placeholder for compression updates
+                progress_placeholder = st.empty()
             
             # Run compression
             try:
@@ -172,6 +240,8 @@ if uploaded_file is not None:
                     # Display compression settings used
                     st.write("**Applied Settings:**")
                     settings = []
+                    if is_video:
+                        settings.append(f"Converted from MP4 (FPS: {video_fps}, Scale: {video_scale})")
                     if crop_pixels:
                         settings.append(f"Cropped: {crop_pixels}")
                     if frame_sample_rate < 1.0:
@@ -192,16 +262,19 @@ if uploaded_file is not None:
                 st.download_button(
                     label="Download Compressed GIF",
                     data=compressed_data,
-                    file_name=f"compressed_{uploaded_file.name}",
+                    file_name=f"compressed_{os.path.splitext(uploaded_file.name)[0]}.gif",
                     mime="image/gif"
                 )
                 
             except Exception as e:
-                st.error(f"Error compressing GIF: {e}")
+                st.error(f"Error processing file: {e}")
             
             finally:
                 # Clean up temporary files
                 try:
+                    if is_video:
+                        os.unlink(mp4_path)
+                        os.unlink(gif_path)
                     os.unlink(input_path)
                     os.unlink(output_path)
                 except:

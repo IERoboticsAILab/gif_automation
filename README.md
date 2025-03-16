@@ -1,13 +1,16 @@
 # GIF Compression Tool
 
-A web-based tool to compress GIF files to a specified target size while maintaining quality.
+A web-based tool to compress GIF files to a specified target size while maintaining quality. It can also convert MP4 videos to optimized GIFs.
 
 ## Features
 
-- Upload any GIF file
-- Set custom target size
-- Visual comparison between original and compressed GIFs
+- Upload any GIF file or MP4 video
+- Convert videos to GIF format with customizable settings
+- Set custom target size for compression
+- Visual comparison between original and compressed files
 - Adaptive compression algorithm that tries different settings
+- Frame sampling and duration adjustment
+- Crop unnecessary borders to reduce file size
 - Download compressed GIF with a single click
 
 ## Installation
@@ -23,7 +26,24 @@ cd gif_automation
 pip install -r requirements.txt
 ```
 
-3. (Optional) Install gifsicle for improved compression quality:
+3. (Optional but recommended) Install FFmpeg for better video-to-GIF conversion:
+
+On macOS:
+```
+brew install ffmpeg
+```
+
+On Ubuntu/Debian:
+```
+apt-get install ffmpeg
+```
+
+On Windows:
+```
+# Download from https://ffmpeg.org/download.html and add to your PATH
+```
+
+4. (Optional) Install gifsicle for improved GIF compression:
 
 On macOS:
 ```
@@ -51,9 +71,9 @@ streamlit run app.py
 
 2. Open your web browser to the URL shown in the terminal (typically http://localhost:8501)
 
-3. Upload a GIF, adjust compression settings in the sidebar if needed, and click "Compress GIF"
+3. Upload a GIF or MP4, adjust settings in the sidebar if needed, and click "Compress GIF" or "Convert to GIF & Compress"
 
-4. Download the compressed GIF using the download button
+4. Download the processed GIF using the download button
 
 ### Command Line Interface
 
@@ -69,6 +89,14 @@ Options:
 - `-m, --max-attempts`: Maximum compression attempts (default: 10)
 - `-b, --batch`: Process all GIFs in a directory
 
+Advanced options:
+- `--min-colors`: Minimum number of colors (2-256, default: 32)
+- `--min-scale`: Minimum scale factor (0.1-1.0, default: 0.4)
+- `--force-scaling`: Enable scaling early in compression process
+- `--frame-sample`: Frame sample rate (0.1-1.0, default: 1.0)
+- `--duration-factor`: Frame duration multiplier (0.5-2.0, default: 1.0)
+- `--crop`: Crop pixels from each edge (e.g. --crop 10 10 10 10)
+
 Example batch processing:
 ```
 python main.py /path/to/gifs/ -b -o /path/to/output/ -s 0.5
@@ -76,15 +104,22 @@ python main.py /path/to/gifs/ -b -o /path/to/output/ -s 0.5
 
 ## How It Works
 
-The compression algorithm tries multiple strategies in sequence:
+The application uses a multi-step approach:
 
-1. First attempts color reduction and lossy compression to reach target size
-2. If target size is still not reached, reduces the GIF dimensions
-3. Uses gifsicle for better compression when available, falls back to PIL otherwise
+1. For MP4 files, first converts them to GIFs using FFmpeg (if available) or OpenCV+PIL
+2. Applies any preprocessing steps (cropping, frame sampling, duration adjustment)
+3. Tries multiple compression strategies to reach target size:
+   - Color reduction
+   - Lossy compression
+   - Scale reduction
+   - Frame sampling
+4. Uses gifsicle for better compression when available, falls back to PIL otherwise
 
 ## Requirements
 
 - Python 3.6+
 - Pillow
 - Streamlit
-- (Optional) gifsicle
+- OpenCV (for MP4 conversion)
+- (Optional) FFmpeg (for better MP4 conversion)
+- (Optional) gifsicle (for better GIF compression)

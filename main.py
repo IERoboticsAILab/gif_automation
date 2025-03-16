@@ -8,6 +8,152 @@ import math
 from PIL import Image, ImageSequence
 
 
+def convert_mp4_to_gif(video_path, gif_path, fps=10, scale=1.0):
+    """
+    Convert MP4 video to GIF format.
+    
+    Args:
+        video_path (str): Path to input MP4 file
+        gif_path (str): Path to save the output GIF
+        fps (int): Frames per second for the output GIF
+        scale (float): Scale factor for resolution (1.0 = original size)
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    # Try using FFmpeg first (much better quality and efficiency)
+    try:
+        # Check if FFmpeg is available
+        subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        
+        # Create temp file for the palette (better quality with palette)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_palette:
+            palette_path = temp_palette.name
+        
+        # Build filter string based on scale
+        if scale != 1.0:
+            filter_scale = f"scale=iw*{scale}:ih*{scale}:flags=lanczos,"
+        else:
+            filter_scale = ""
+            
+        filter_str = f"{filter_scale}fps={fps}"
+        palette_filter = f"{filter_str},palettegen=stats_mode=diff"
+        output_filter = f"{filter_str},paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
+        
+        # First pass - generate palette
+        subprocess.run([
+            "ffmpeg",
+            "-i", video_path,
+            "-vf", palette_filter,
+            "-y", palette_path
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        
+        # Second pass - generate GIF with palette
+        subprocess.run([
+            "ffmpeg",
+            "-i", video_path,
+            "-i", palette_path,
+            "-lavfi", output_filter,
+            "-y", gif_path
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        
+        # Clean up
+        os.unlink(palette_path)
+        return True
+        
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        print(f"FFmpeg error: {e}. Falling back to PIL conversion (lower quality).")
+        try:
+            return _convert_mp4_to_gif_with_pil(video_path, gif_path, fps, scale)
+        except Exception as e:
+            print(f"PIL conversion also failed: {e}")
+            return False
+
+def _convert_mp4_to_gif_with_pil(video_path, gif_path, fps=10, scale=1.0):
+    """
+    Fallback method to convert MP4 to GIF using PIL and temporary images.
+    Less efficient and lower quality than FFmpeg method.
+    """
+    # We need to extract frames first using OpenCV
+    try:
+        import cv2
+    except ImportError:
+        print("OpenCV (cv2) is required for PIL-based video conversion.")
+        return False
+    
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Open the video file
+        video = cv2.VideoCapture(video_path)
+        if not video.isOpened():
+            raise ValueError("Could not open video file")
+            
+        # Get video properties
+        frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+        video_fps = video.get(cv2.CAP_PROP_FPS)
+        
+        # Calculate which frames to keep based on target fps
+        frame_interval = max(1, round(video_fps / fps))
+        frames = []
+        
+        # Extract frames to temporary directory
+        success, frame = video.read()
+        frame_idx = 0
+        
+        while success:
+            if frame_idx % frame_interval == 0:
+                # Resize if needed
+                if scale != 1.0:
+                    height, width = frame.shape[:2]
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+                
+                # Convert BGR to RGB (OpenCV uses BGR)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # Create PIL Image and append to frames list
+                pil_img = Image.fromarray(frame_rgb)
+                frames.append(pil_img)
+                
+            # Read next frame
+            success, frame = video.read()
+            frame_idx += 1
+            
+        # Release video
+        video.release()
+        
+        if not frames:
+            raise ValueError("No frames extracted from video")
+        
+        # Save as GIF
+        frames[0].save(
+            gif_path,
+            format="GIF",
+            append_images=frames[1:],
+            save_all=True,
+            optimize=True,
+            duration=int(1000 / fps),  # Duration in ms between frames
+            loop=0  # Loop forever
+        )
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error in PIL conversion: {e}")
+        return False
+        
+    finally:
+        # Clean up temporary directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def compress_gif(
     input_path, 
     output_path, 
